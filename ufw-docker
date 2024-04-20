@@ -70,16 +70,22 @@ function ufw-docker--allow() {
     local PROTO="$3"
     local NETWORK="${4:-}"
 
+    echo "Allowing Destination container: $INSTANCE_NAME, Destination port: $INSTANCE_PORT, Protocol: $PROTO, Network: $NETWORK"
+
     docker inspect "$INSTANCE_NAME" &>/dev/null ||
         die "Docker instance \"$INSTANCE_NAME\" doesn't exist."
 
-    mapfile -t INSTANCE_IP_ADDRESSES < <(docker inspect --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' "$INSTANCE_NAME" 2>/dev/null | remove_blank_lines)
-    mapfile -t INSTANCE_IP_V6_ADDRESSES < <(docker inspect --format='{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{"\n"}}{{end}}' "$INSTANCE_NAME" 2>/dev/null | remove_blank_lines)
+    mapfile -t INSTANCE_IP_ADDRESSES < <(docker inspect --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' "$INSTANCE_NAME" 2>/dev/null)
+    (IFS=,; echo "Container IPv4 Addresses: ${INSTANCE_IP_ADDRESSES[*]}")
+    mapfile -t INSTANCE_IP_V6_ADDRESSES < <(docker inspect --format='{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{"\n"}}{{end}}' "$INSTANCE_NAME" 2>/dev/null)
+    (IFS=,; echo "Container IPv6 Addresses: ${INSTANCE_IP_V6_ADDRESSES[*]}")
 
     [[ -z "${INSTANCE_IP_ADDRESSES:-}" ]] && die "Could not find a running instance \"$INSTANCE_NAME\"."
 
-    mapfile -t INSTANCE_NETWORK_NAMES < <(docker inspect --format='{{range $k, $v := .NetworkSettings.Networks}}{{printf "%s\n" $k}}{{end}}' "$INSTANCE_NAME" 2>/dev/null | remove_blank_lines)
-    mapfile -t PORT_PROTO_LIST < <(docker inspect --format='{{range $p, $conf := .NetworkSettings.Ports}}{{with $conf}}{{$p}}{{"\n"}}{{end}}{{end}}' "$INSTANCE_NAME" | remove_blank_lines)
+    mapfile -t INSTANCE_NETWORK_NAMES < <(docker inspect --format='{{range $k, $v := .NetworkSettings.Networks}}{{printf "%s\n" $k}}{{end}}' "$INSTANCE_NAME" 2>/dev/null)
+    (IFS=,; echo "Container networks: ${INSTANCE_NETWORK_NAMES[*]}")
+    mapfile -t PORT_PROTO_LIST < <(docker inspect --format='{{range $p, $conf := .NetworkSettings.Ports}}{{with $conf}}{{$p}}{{"\n"}}{{end}}{{end}}' "$INSTANCE_NAME")
+    (IFS=,; echo "Container ports/protocols: ${PORT_PROTO_LIST[*]}")
 
     if [[ -z "${PORT_PROTO_LIST:-}" ]]; then
         err "\"$INSTANCE_NAME\" doesn't have any published ports."
@@ -90,31 +96,33 @@ function ufw-docker--allow() {
     for PORT_PROTO in "${PORT_PROTO_LIST[@]}"; do
         if [[ -z "$INSTANCE_PORT" || "$PORT_PROTO" = "${INSTANCE_PORT}/${PROTO}" ]]; then
             ITER=0
-            for IP in "${INSTANCE_IP_ADDRESSES[@]}"; do
-                INSTANCE_NETWORK="${INSTANCE_NETWORK_NAMES[$ITER]}"
+            for INSTANCE_NETWORK in "${INSTANCE_NETWORK_NAMES[@]}"; do
+                IP="${INSTANCE_IP_ADDRESSES[$ITER]}"
+                IP_V6="${INSTANCE_IP_V6_ADDRESSES[$ITER]}"
                 ITER=$((ITER+1))
+                echo "Processing instance network $INSTANCE_NETWORK with IPv4 ${IP:-NONE} and IPv6 ${IP_V6:-NONE}"
                 if [[ -n "$NETWORK" ]] && [[ "$NETWORK" != "$INSTANCE_NETWORK" ]]; then
                     continue
                 fi
-                ufw-docker--add-rule "$INSTANCE_NAME" "$IP" "${PORT_PROTO%/*}" "${PORT_PROTO#*/}" "${INSTANCE_NETWORK}"
-                RETVAL="$?"
-            done
-
-            ITER_V6=0
-            for IP in "${INSTANCE_IP_V6_ADDRESSES[@]}"; do
-                INSTANCE_NETWORK="${INSTANCE_NETWORK_NAMES[$ITER_V6]}"
-                ITER_V6=$((ITER_V6+1))
-                if [[ -n "$NETWORK" ]] && [[ "$NETWORK" != "$INSTANCE_NETWORK" ]]; then
-                    continue
+                if [ -n "$IP" ]; then
+                    echo "Adding rule for IPv4 $IP and instance network $INSTANCE_NETWORK"
+                    ufw-docker--add-rule "$INSTANCE_NAME" "$IP" "${PORT_PROTO%/*}" "${PORT_PROTO#*/}" "${INSTANCE_NETWORK}" || 
+                    {
+                        RETVAL="$?";
+                        err "Fail to add rule(s), cannot find the published port ${INSTANCE_PORT}/${PROTO} of instance \"${INSTANCE_NAME}\" or cannot update outdated rule(s).";
+                    }
                 fi
-                ufw-docker--add-rule "${INSTANCE_NAME}_IPv6" "$IP" "${PORT_PROTO%/*}" "${PORT_PROTO#*/}" "${INSTANCE_NETWORK}"
-                RETVAL="$?"
+                if [ -n "$IP_V6" ]; then
+                    echo "Adding rule for IPv6 $IP_V6 and instance network $INSTANCE_NETWORK"
+                    ufw-docker--add-rule "${INSTANCE_NAME}_IPv6" "$IP_V6" "${PORT_PROTO%/*}" "${PORT_PROTO#*/}" "${INSTANCE_NETWORK}" ||
+                    {
+                        RETVAL="$?";
+                        err "Fail to add rule(s), cannot find the published port ${INSTANCE_PORT}/${PROTO} of instance \"${INSTANCE_NAME}\" or cannot update outdated rule(s).";
+                    }
+                fi
             done
         fi
     done
-    if [[ "$RETVAL" -ne 0 ]]; then
-        err "Fail to add rule(s), cannot find the published port ${INSTANCE_PORT}/${PROTO} of instance \"${INSTANCE_NAME}\" or cannot update outdated rule(s)."
-    fi
     return "$RETVAL"
 }
 
@@ -344,7 +352,7 @@ function ufw-docker--check-install() {
     rm-on-exit "$after_rules_tmp"
 
     sed "/^# BEGIN UFW AND DOCKER/,/^# END UFW AND DOCKER/d" "$after_rules" > "$after_rules_tmp"
-    >> "${after_rules_tmp}" cat <<-\EOF
+    >> "${after_rules_tmp}" cat <<-EOF
 	# BEGIN UFW AND DOCKER
 	*filter
 	:ufw-user-forward - [0:0]
@@ -376,14 +384,13 @@ function ufw-docker--check-install() {
 }
 
 function ufw-docker--check-install_ipv6() {
-    DOCKER_IPV6_NETWORK=$(sed -En 's/.*"fixed-cidr-v6":.?"([^"]*).*/\1/p' /etc/docker/daemon.json)
-    [[ -z "${DOCKER_IPV6_NETWORK:-}" ]] && die "Could not find \"fixed-cidr-v6\" in \"/etc/docker/daemon.json\"."
-
+    DOCKER_IPV6_NETWORK=fc00::/7
+    
     after6_rules_tmp="${after6_rules_tmp:-$(mktemp)}"
     rm-on-exit "$after6_rules_tmp"
 
     sed "/^# BEGIN UFW AND DOCKER/,/^# END UFW AND DOCKER/d" "$after6_rules" > "$after6_rules_tmp"
-    >> "${after6_rules_tmp}" cat <<-\EOF
+    >> "${after6_rules_tmp}" cat <<-EOF
 	# BEGIN UFW AND DOCKER
 	*filter
 	:ufw6-user-forward - [0:0]

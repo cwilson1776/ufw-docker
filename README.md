@@ -195,20 +195,11 @@ Doesn't support older versions of Ubuntu, and the command is a bit more complica
 
 ### IPv6
 
-[Enable IPv6 support](https://forums.docker.com/t/docker-user-chain-for-ip6tables/133961/3) in Docker by specifying ULA range (RFC 4193) in `/etc/docker/daemon.json` 
-```json
-{
-  "experimental": true,
-  "ipv6": true,
-  "ip6tables": true,
-  "fixed-cidr-v6": "fd00:dead:beef::/48"
-}
-```
+[IPv6 support](https://forums.docker.com/t/docker-user-chain-for-ip6tables/133961/3) is enabled by specifying whole ULA range (RFC 4193) `fc00::/7`, **not just that in `fixed-cidr-v6`**.
 
-Restart Docker
-```shell
-systemctl restart docker
-```
+This is similar to the approach to IPv4 filtering, where access to *all* IPv4 private address ranges (RFC 1918) is blocked.
+
+`fixed-cidr-v6` is only the [CIDR for the default bridge network](https://docs.docker.com/config/daemon/ipv6/#use-ipv6-for-the-default-bridge-network), but [other networks can be created with *any* CIDR](https://docs.docker.com/config/daemon/ipv6/#create-an-ipv6-network:~:text=Create%20a%20new%20IPv6%20network).
 
 ### Conclusion
 
