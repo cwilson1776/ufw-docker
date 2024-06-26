@@ -148,9 +148,9 @@ function ufw-docker--add-rule() {
 
     declare comment
 
-    echo "allow ${INSTANCE_NAME} ${PORT}/${PROTO} ${NETWORK}"
+    echo "${RULE_TYPE} ${INSTANCE_NAME} ${PORT}/${PROTO} ${NETWORK}"
     typeset -a UFW_OPTS
-    UFW_OPTS=(route allow proto "${PROTO}"
+    UFW_OPTS=(route "${RULE_TYPE}" proto "${PROTO}"
               from any to "$INSTANCE_IP_ADDRESS")
     comment="allow ${INSTANCE_NAME}"
     [[ -n "$PORT" ]] && {
@@ -514,13 +514,22 @@ ufw_action="${1:-help}"
 case "$ufw_action" in
     delete)
         shift || true
-        if [[ "${1:?Invalid 'delete' command syntax.}" != "allow" ]]; then
-            die "\"delete\" command only support removing allowed rules"
+        if [[ "${1:?Invalid 'delete' command syntax.}" != "allow" ]] && [[ "${1:?Invalid 'delete' command syntax.}" != "limit" ]]; then
+            die "\"delete\" command only support removing allow or limit rules"
         fi
         ;&
-    list|allow)
-        shift || true
+    list|allow|limit)
 
+        if [ "$ufw_action" = "limit" ]; then
+            ufw_action=allow
+        fi
+
+        if [ "$1" = "allow" ] || [ "$1" = "limit" ]; then
+                RULE_TYPE=$1
+        fi
+
+        shift || true
+        
         INSTANCE_ID="${1:?Docker instance name/ID cannot be empty.}"
         INSTANCE_NAME="$(ufw-docker--instance-name "$INSTANCE_ID")"
         shift || true
