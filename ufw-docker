@@ -11,7 +11,7 @@ GREP_REGEXP_INSTANCE_NAME="[-_.[:alnum:]]\\+"
 DEFAULT_PROTO=tcp
 
 ufw_docker_agent=ufw-docker-agent
-ufw_docker_agent_image="${UFW_DOCKER_AGENT_IMAGE:-chaifeng/${ufw_docker_agent}:221002-nf_tables}"
+ufw_docker_agent_image="${UFW_DOCKER_AGENT_IMAGE:-custom/${ufw_docker_agent}:latest}"
 
 if [[ "${ufw_docker_agent_image}" = *-@(legacy|nf_tables) ]]; then
     if iptables --version | grep -F '(legacy)' &>/dev/null; then
@@ -106,7 +106,7 @@ function ufw-docker--allow() {
                 fi
                 if [ -n "$IP" ]; then
                     echo "Adding rule for IPv4 $IP and instance network $INSTANCE_NETWORK"
-                    ufw-docker--add-rule "$INSTANCE_NAME" "$IP" "${PORT_PROTO%/*}" "${PORT_PROTO#*/}" "${INSTANCE_NETWORK}" || 
+                    ufw-docker--add-rule "$INSTANCE_NAME" "$IP" "${PORT_PROTO%/*}" "${PORT_PROTO#*/}" "${INSTANCE_NETWORK}" ||
                     {
                         RETVAL="$?";
                         err "Fail to add rule(s), cannot find the published port ${INSTANCE_PORT}/${PROTO} of instance \"${INSTANCE_NAME}\" or cannot update outdated rule(s).";
@@ -361,14 +361,10 @@ function ufw-docker--check-install() {
 	-A DOCKER-USER -j ufw-user-forward
 
 	# allow communication between containers
-	-A DOCKER-USER -j RETURN -s 10.0.0.0/8
 	-A DOCKER-USER -j RETURN -s 172.16.0.0/12
-	-A DOCKER-USER -j RETURN -s 192.168.0.0/16
 
 	# allow established connections (e.g. initiated by a container)
-	-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN -d 10.0.0.0/8
 	-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN -d 172.16.0.0/12
-	-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN -d 192.168.0.0/16
 
 	# block anything else
 	-A DOCKER-USER -j ufw-docker-logging-deny
@@ -385,7 +381,7 @@ function ufw-docker--check-install() {
 
 function ufw-docker--check-install_ipv6() {
     DOCKER_IPV6_NETWORK=fc00::/7
-    
+
     after6_rules_tmp="${after6_rules_tmp:-$(mktemp)}"
     rm-on-exit "$after6_rules_tmp"
 
@@ -405,7 +401,7 @@ function ufw-docker--check-install_ipv6() {
 	-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN -d {DOCKER_IPV6_NETWORK}
 
 	# block anything else
-	-A DOCKER-USER -j ufw-docker-logging-deny
+	-A DOCKER-USER -j ufw6-docker-logging-deny
 
 	-A ufw6-docker-logging-deny -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix "[UFW DOCKER BLOCK] "
 	-A ufw6-docker-logging-deny -j DROP
@@ -529,7 +525,7 @@ case "$ufw_action" in
         fi
 
         shift || true
-        
+
         INSTANCE_ID="${1:?Docker instance name/ID cannot be empty.}"
         INSTANCE_NAME="$(ufw-docker--instance-name "$INSTANCE_ID")"
         shift || true

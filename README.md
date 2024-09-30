@@ -201,6 +201,21 @@ This is similar to the approach to IPv4 filtering, where access to *all* IPv4 pr
 
 `fixed-cidr-v6` is only the [CIDR for the default bridge network](https://docs.docker.com/config/daemon/ipv6/#use-ipv6-for-the-default-bridge-network), but [other networks can be created with *any* CIDR](https://docs.docker.com/config/daemon/ipv6/#create-an-ipv6-network:~:text=Create%20a%20new%20IPv6%20network).
 
+[Enable IPv6 support](https://forums.docker.com/t/docker-user-chain-for-ip6tables/133961/3) in Docker by specifying ULA range (RFC 4193) in `/etc/docker/daemon.json`
+```json
+{
+  "experimental": true,
+  "ipv6": true,
+  "ip6tables": true,
+  "fixed-cidr-v6": "fd00:dead:beef::/48"
+}
+```
+
+Restart Docker
+```shell
+systemctl restart docker
+```
+
 ### Conclusion
 
 If we are using an older version of Ubuntu, we can use `ufw-user-input` chain. But be careful to avoid exposing services that should not be exposed
