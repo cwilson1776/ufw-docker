@@ -95,11 +95,21 @@ function ufw-docker--allow() {
     RETVAL=1
     for PORT_PROTO in "${PORT_PROTO_LIST[@]}"; do
         if [[ -z "$INSTANCE_PORT" || "$PORT_PROTO" = "${INSTANCE_PORT}/${PROTO}" ]]; then
+            if [[ -z "${PORT_PROTO}" ]]; then
+                continue
+            fi
             ITER=0
             for INSTANCE_NETWORK in "${INSTANCE_NETWORK_NAMES[@]}"; do
                 IP="${INSTANCE_IP_ADDRESSES[$ITER]}"
                 IP_V6="${INSTANCE_IP_V6_ADDRESSES[$ITER]}"
                 ITER=$((ITER+1))
+                if [[ -z "${IP}" && -z "${IP_V6}" ]]; then
+                    if [[ -n "${INSTANCE_NETWORK}" ]]; then
+                        echo "Processing instance network $INSTANCE_NETWORK, but it has no IPv4 nor IPv6 address. Skipping."
+                    fi
+                    # If INSTANCE_NETWORK is empty, AND both IPv4 and IPv6 are empty, skip silenty
+                    continue
+                fi
                 echo "Processing instance network $INSTANCE_NETWORK with IPv4 ${IP:-NONE} and IPv6 ${IP_V6:-NONE}"
                 if [[ -n "$NETWORK" ]] && [[ "$NETWORK" != "$INSTANCE_NETWORK" ]]; then
                     continue
